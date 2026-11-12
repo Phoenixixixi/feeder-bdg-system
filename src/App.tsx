@@ -298,7 +298,8 @@ export default function App() {
         }
       },
       (err) => {
-        console.warn('Firestore error, continuing with cached/initial schedules:', err);
+        console.warn('MongoDB schedules fetch error, continuing with cached/initial schedules:', err);
+        setIsDbConnected(false);
       }
     );
     return () => unsub();
@@ -452,7 +453,18 @@ export default function App() {
       }
 
       // Phase 3: Voice announcement saat mendekati batas akhir tutup gate (Panggilan terakhir)
-      if (item.isApproachingDeadline && item.status === 'GATE_CLOSING_SOON') {
+      const hasCustomCloseGate2mAudio = (item.schedule.customAudioAlerts || []).some(
+        (ca) =>
+          ca.enabled !== false &&
+          ca.relativeTo === 'close_gate' &&
+          ca.offsetMinutes === 2 &&
+          Boolean(ca.audioUrl || ca.audioFileName || ca.audioEnUrl || ca.audioEnFileName)
+      );
+      if (
+        item.isApproachingDeadline &&
+        (item.status === 'GATE_CLOSING_SOON' || item.status === 'DELAYED') &&
+        !hasCustomCloseGate2mAudio
+      ) {
         const closingKey = `CLOSING-${item.schedule.whooshTrainNo}-${item.closeGateTime}`;
 
         if (!announcedTrainsRef.current.has(closingKey)) {
@@ -512,7 +524,7 @@ export default function App() {
           }
 
           const { triggerMinutes, triggerTimeStr } = getCustomAlertTriggerTime(
-            item.schedule.departureTime,
+            item.effectiveDepartureTime,
             customAlert
           );
 

@@ -12,9 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const MONGODB_URI =
-  process.env.MONGODB_URI ||
-  'mongodb+srv://mhammaddustin_db_user:%21Rusdi19@cluster0.nkb8oon.mongodb.net/feeder-bdg?retryWrites=true&w=majority';
+const MONGODB_URI = process.env.MONGODB_URI || '';
 const DB_NAME = process.env.MONGODB_DB_NAME || 'feeder-bdg';
 
 const app = express();
@@ -27,19 +25,34 @@ app.use(express.urlencoded({ limit: '60mb', extended: true }));
 // MongoDB Connection
 let mongoClient: MongoClient | null = null;
 let db: any = null;
+let connectingPromise: Promise<any> | null = null;
 
 async function getDb() {
-  if (!db) {
-    mongoClient = new MongoClient(MONGODB_URI, {
-      maxPoolSize: 20,
-      serverSelectionTimeoutMS: 8000,
-    });
-    await mongoClient.connect();
-    db = mongoClient.db(DB_NAME);
-    console.log(`[MongoDB] Connected successfully to ${DB_NAME}`);
-    await autoSeedIfNeeded(db);
-  }
-  return db;
+  if (db) return db;
+  if (connectingPromise) return connectingPromise;
+
+  connectingPromise = (async () => {
+    try {
+      mongoClient = new MongoClient(MONGODB_URI, {
+        maxPoolSize: 20,
+        serverSelectionTimeoutMS: 15000,
+        family: 4,
+      });
+      await mongoClient.connect();
+      db = mongoClient.db(DB_NAME);
+      console.log(`[MongoDB] Connected successfully to ${DB_NAME}`);
+      await autoSeedIfNeeded(db);
+      return db;
+    } catch (err) {
+      db = null;
+      mongoClient = null;
+      throw err;
+    } finally {
+      connectingPromise = null;
+    }
+  })();
+
+  return connectingPromise;
 }
 
 async function autoSeedIfNeeded(database: any) {
@@ -99,8 +112,27 @@ app.get('/api/schedules', async (req, res) => {
   try {
     const database = await getDb();
     const schedulesColl = database.collection('schedules');
-    // Fetch all documents without MongoDB in-memory 32MB sort limitation
-    const items = await schedulesColl.find({}).toArray();
+    // Fetch lightweight schedule documents (exclude bulky base64 audio fields at DB level)
+    // Full audio data is fetched on-demand from /api/audio/:key and cached in IndexedDB
+    const items = await schedulesColl
+      .find(
+        {},
+        {
+          projection: {
+            audioPreOpenUrl: 0,
+            audioGateOpenUrl: 0,
+            audioClosingUrl: 0,
+            audioUrl: 0,
+            audioPreOpenEnUrl: 0,
+            audioGateOpenEnUrl: 0,
+            audioClosingEnUrl: 0,
+            audioEnUrl: 0,
+            'customAudioAlerts.audioUrl': 0,
+            'customAudioAlerts.audioEnUrl': 0,
+          },
+        }
+      )
+      .toArray();
 
     // Sort cleanly in Node.js JavaScript (31 items, 0ms, zero memory limit)
     items.sort((a: any, b: any) => (a.tripIndex ?? 0) - (b.tripIndex ?? 0));

@@ -29,9 +29,9 @@ export interface ComputedTrainInfo {
   secondsUntilCloseGate: number;
   minutesUntilGateOpen: number;
   secondsUntilGateOpen: number;
-  isGateOpeningSoon: boolean;     // 2 menit sebelum gate in dibuka (trigger audio)
-  isGateJustOpened: boolean;      // Saat gate in resmi dibuka (trigger audio)
-  isApproachingDeadline: boolean; // Mendekati batas akhir tutup gate (trigger audio)
+  isGateOpeningSoon: boolean;     // 2 menit sebelum gate in dibuka
+  isGateJustOpened: boolean;      // Saat gate in resmi dibuka
+  isApproachingDeadline: boolean; // 2 menit sebelum gate ditutup
   hasDeparted: boolean;           // Sudah lewat
 }
 
@@ -202,6 +202,7 @@ export function evaluateTrainStatus(
       if (currentTotalSeconds - checkSec < 60) {
         isGateJustOpened = true;
       }
+      // NEW: Trigger 2 minutes before gate close
       if (secondsUntilCloseGate <= 120 && secondsUntilCloseGate > 0) {
         isApproachingDeadline = true;
       }
@@ -219,6 +220,7 @@ export function evaluateTrainStatus(
       isGateJustOpened = true;
     }
 
+    // NEW: Trigger 2 minutes before gate close
     if (secondsUntilCloseGate <= 120 && secondsUntilCloseGate > 0) {
       status = 'GATE_CLOSING_SOON';
       statusLabel = 'MENDEKATI BATAS AKHIR';

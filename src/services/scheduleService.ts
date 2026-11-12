@@ -2,6 +2,7 @@ import { FeederSchedule, INITIAL_SCHEDULES, addMinutesToTime, calculateDurationM
 import {
   saveAudioToIndexedDB,
   getAudioFromIndexedDB,
+  getAudioRecordFromIndexedDB,
   deleteAudioFromIndexedDB,
   getAllLocalAudioRecords,
   clearAllAudioFromIndexedDB,
@@ -134,12 +135,12 @@ export async function saveAudioToFirestoreChunks(
 /**
  * Fetches audio dataUrl from MongoDB Atlas cloud.
  */
-export async function fetchAudioFromFirestoreChunks(audioKey: string): Promise<string | null> {
+export async function fetchAudioFromFirestoreChunks(audioKey: string): Promise<{ dataUrl: string; updatedAt: string } | null> {
   try {
     const res = await fetch(`/api/audio/${encodeURIComponent(audioKey)}`);
     if (!res.ok) return null;
     const data = await res.json();
-    return data.dataUrl || null;
+    return { dataUrl: data.dataUrl || '', updatedAt: data.updatedAt || new Date().toISOString() };
   } catch (err) {
     console.warn(`Could not fetch audio ${audioKey} from MongoDB:`, err);
     return null;
@@ -205,6 +206,7 @@ function applyAudioUrlToSchedule(
 }
 
 let isSyncingAudios = false;
+let hasFetchedSchedulesFromDb = false;
 
 /**
  * Synchronizes missing audio files from MongoDB Atlas into local IndexedDB and in-memory schedules.
@@ -216,6 +218,62 @@ export async function syncMissingAudiosFromFirestore(schedules: FeederSchedule[]
 
   let anyUpdated = false;
   try {
+    let remoteMetaMap: Map<string, string> | null = null;
+    try {
+      const metaRes = await fetch('/api/audio');
+      if (metaRes.ok) {
+        const metaList = await metaRes.json();
+        if (Array.isArray(metaList)) {
+          remoteMetaMap = new Map<string, string>();
+          for (const m of metaList) {
+            if (m?.key) remoteMetaMap.set(m.key, m.updatedAt || '');
+          }
+        }
+      }
+    } catch {
+      // Fallback to direct fetches if metadata endpoint fails
+    }
+
+    const resolveRemoteKey = (keys: string[]): string | null => {
+      if (!remoteMetaMap) return keys[0];
+      return keys.find((k) => remoteMetaMap!.has(k)) || null;
+    };
+
+    const syncSlot = async (
+      s: FeederSchedule,
+      cleanNo: string,
+      localSlot: string,
+      candidateKeys: string[],
+      apply: (url: string) => void
+    ) => {
+      const targetKey = resolveRemoteKey(candidateKeys);
+      if (!targetKey) return;
+
+      const cached = await getAudioRecordFromIndexedDB(s.id, localSlot);
+      const remoteUpdatedAt = remoteMetaMap?.get(targetKey);
+      if (cached && remoteMetaMap && (!remoteUpdatedAt || new Date(remoteUpdatedAt) <= new Date(cached.updatedAt))) {
+        apply(cached.dataUrl);
+        return;
+      }
+
+      let cloud = await fetchAudioFromFirestoreChunks(targetKey);
+      if (!cloud && !remoteMetaMap) {
+        for (const fallbackKey of candidateKeys.slice(1)) {
+          cloud = await fetchAudioFromFirestoreChunks(fallbackKey);
+          if (cloud) break;
+        }
+      }
+
+      if (cloud && cloud.dataUrl && (!cached || new Date(cloud.updatedAt) > new Date(cached.updatedAt))) {
+        await saveAudioToIndexedDB(s.id, localSlot, cloud.dataUrl, cloud.updatedAt);
+        await saveAudioToIndexedDB(cleanNo, localSlot, cloud.dataUrl, cloud.updatedAt);
+        apply(cloud.dataUrl);
+        anyUpdated = true;
+      } else if (cached) {
+        apply(cached.dataUrl);
+      }
+    };
+
     for (const s of schedules) {
       const cleanNo = s.whooshTrainNo.replace(/[^a-zA-Z0-9]/g, '_');
 
@@ -228,21 +286,13 @@ export async function syncMissingAudiosFromFirestore(schedules: FeederSchedule[]
 
       for (const item of idSlots) {
         if (item.fileName && (!item.url || item.url === '')) {
-          const cached = await getAudioFromIndexedDB(s.id, item.slot);
-          if (cached) {
-            applyAudioUrlToSchedule(s, item.slot, cached, 'id');
-            anyUpdated = true;
-          } else {
-            const fetched =
-              (await fetchAudioFromFirestoreChunks(`${s.id}_${item.slot}`)) ||
-              (await fetchAudioFromFirestoreChunks(`${cleanNo}_${item.slot}`));
-            if (fetched) {
-              await saveAudioToIndexedDB(s.id, item.slot, fetched);
-              await saveAudioToIndexedDB(cleanNo, item.slot, fetched);
-              applyAudioUrlToSchedule(s, item.slot, fetched, 'id');
-              anyUpdated = true;
-            }
-          }
+          await syncSlot(
+            s,
+            cleanNo,
+            item.slot,
+            [`${s.id}_${item.slot}`, `${cleanNo}_${item.slot}`],
+            (url) => applyAudioUrlToSchedule(s, item.slot, url, 'id')
+          );
         }
       }
 
@@ -255,21 +305,13 @@ export async function syncMissingAudiosFromFirestore(schedules: FeederSchedule[]
 
       for (const item of enSlots) {
         if (item.fileName && (!item.url || item.url === '')) {
-          const cached = await getAudioFromIndexedDB(s.id, `${item.slot}_en`);
-          if (cached) {
-            applyAudioUrlToSchedule(s, item.slot, cached, 'en');
-            anyUpdated = true;
-          } else {
-            const fetched =
-              (await fetchAudioFromFirestoreChunks(`${s.id}_${item.slot}_en`)) ||
-              (await fetchAudioFromFirestoreChunks(`${cleanNo}_${item.slot}_en`));
-            if (fetched) {
-              await saveAudioToIndexedDB(s.id, `${item.slot}_en`, fetched);
-              await saveAudioToIndexedDB(cleanNo, `${item.slot}_en`, fetched);
-              applyAudioUrlToSchedule(s, item.slot, fetched, 'en');
-              anyUpdated = true;
-            }
-          }
+          await syncSlot(
+            s,
+            cleanNo,
+            `${item.slot}_en`,
+            [`${s.id}_${item.slot}_en`, `${cleanNo}_${item.slot}_en`],
+            (url) => applyAudioUrlToSchedule(s, item.slot, url, 'en')
+          );
         }
       }
 
@@ -277,38 +319,32 @@ export async function syncMissingAudiosFromFirestore(schedules: FeederSchedule[]
       if (s.customAudioAlerts && s.customAudioAlerts.length > 0) {
         for (const ca of s.customAudioAlerts) {
           if (ca.audioFileName && (!ca.audioUrl || ca.audioUrl === '')) {
-            const cached = await getAudioFromIndexedDB(s.id, `custom_${ca.id}`);
-            if (cached) {
-              ca.audioUrl = cached;
+            const cached = await getAudioRecordFromIndexedDB(s.id, `custom_${ca.id}`);
+            const cloud = await fetchAudioFromFirestoreChunks(`${s.id}_custom_${ca.id}`) || 
+                          await fetchAudioFromFirestoreChunks(`${cleanNo}_custom_${ca.id}`) ||
+                          await fetchAudioFromFirestoreChunks(`global_custom_${ca.id}`);
+            
+            if (cloud && (!cached || new Date(cloud.updatedAt) > new Date(cached.updatedAt))) {
+              await saveAudioToIndexedDB(s.id, `custom_${ca.id}`, cloud.dataUrl, cloud.updatedAt);
+              ca.audioUrl = cloud.dataUrl;
               anyUpdated = true;
-            } else {
-              const fetched =
-                (await fetchAudioFromFirestoreChunks(`${s.id}_custom_${ca.id}`)) ||
-                (await fetchAudioFromFirestoreChunks(`${cleanNo}_custom_${ca.id}`)) ||
-                (await fetchAudioFromFirestoreChunks(`global_custom_${ca.id}`));
-              if (fetched) {
-                await saveAudioToIndexedDB(s.id, `custom_${ca.id}`, fetched);
-                ca.audioUrl = fetched;
-                anyUpdated = true;
-              }
+            } else if (cached) {
+              ca.audioUrl = cached.dataUrl;
             }
           }
 
           if (ca.audioEnFileName && (!ca.audioEnUrl || ca.audioEnUrl === '')) {
-            const cached = await getAudioFromIndexedDB(s.id, `custom_${ca.id}_en`);
-            if (cached) {
-              ca.audioEnUrl = cached;
+            const cached = await getAudioRecordFromIndexedDB(s.id, `custom_${ca.id}_en`);
+            const cloud = await fetchAudioFromFirestoreChunks(`${s.id}_custom_${ca.id}_en`) || 
+                          await fetchAudioFromFirestoreChunks(`${cleanNo}_custom_${ca.id}_en`) ||
+                          await fetchAudioFromFirestoreChunks(`global_custom_${ca.id}_en`);
+
+            if (cloud && (!cached || new Date(cloud.updatedAt) > new Date(cached.updatedAt))) {
+              await saveAudioToIndexedDB(s.id, `custom_${ca.id}_en`, cloud.dataUrl, cloud.updatedAt);
+              ca.audioEnUrl = cloud.dataUrl;
               anyUpdated = true;
-            } else {
-              const fetched =
-                (await fetchAudioFromFirestoreChunks(`${s.id}_custom_${ca.id}_en`)) ||
-                (await fetchAudioFromFirestoreChunks(`${cleanNo}_custom_${ca.id}_en`)) ||
-                (await fetchAudioFromFirestoreChunks(`global_custom_${ca.id}_en`));
-              if (fetched) {
-                await saveAudioToIndexedDB(s.id, `custom_${ca.id}_en`, fetched);
-                ca.audioEnUrl = fetched;
-                anyUpdated = true;
-              }
+            } else if (cached) {
+              ca.audioEnUrl = cached.dataUrl;
             }
           }
         }
@@ -456,11 +492,13 @@ export function subscribeSchedules(
 ): () => void {
   subscribers.add(onData);
 
-  // Immediately push in-memory cache
-  mergeWithLocalAudios(inMemorySchedules).then((merged) => {
-    inMemorySchedules = merged;
-    onData(inMemorySchedules);
-  });
+  // Push cached DB schedules immediately only if we have already synced from MongoDB
+  if (hasFetchedSchedulesFromDb) {
+    mergeWithLocalAudios(inMemorySchedules).then((merged) => {
+      inMemorySchedules = merged;
+      onData(inMemorySchedules);
+    });
+  }
 
   let isMounted = true;
 
@@ -479,6 +517,7 @@ export function subscribeSchedules(
       raw.sort((a, b) => (a.departureTime || '').localeCompare(b.departureTime || ''));
 
       const enriched = await mergeWithLocalAudios(raw);
+      hasFetchedSchedulesFromDb = true;
       inMemorySchedules = enriched;
       notifySubscribers();
 
@@ -765,7 +804,7 @@ export async function saveScheduleAudio(
 
   onProgress?.(92, 'Memperbarui dokumen jadwal di MongoDB Atlas...');
 
-  // 4. Update the schedule document in MongoDB Atlas
+  // 4. Update only lightweight metadata in the schedule document (audio payload lives in audio_files)
   try {
     const mongoScheduleUpdates: any = {
       updatedAt: now,
@@ -774,30 +813,30 @@ export async function saveScheduleAudio(
     if (lang === 'en') {
       if (slot === 'pre_open') {
         mongoScheduleUpdates.audioPreOpenEnFileName = fileName;
-        mongoScheduleUpdates.audioPreOpenEnUrl = audioBase64OrDataUrl;
+        mongoScheduleUpdates.audioPreOpenEnUrl = '';
       } else if (slot === 'gate_open') {
         mongoScheduleUpdates.audioGateOpenEnFileName = fileName;
-        mongoScheduleUpdates.audioGateOpenEnUrl = audioBase64OrDataUrl;
+        mongoScheduleUpdates.audioGateOpenEnUrl = '';
       } else if (slot === 'closing') {
         mongoScheduleUpdates.audioClosingEnFileName = fileName;
-        mongoScheduleUpdates.audioClosingEnUrl = audioBase64OrDataUrl;
+        mongoScheduleUpdates.audioClosingEnUrl = '';
       } else {
         mongoScheduleUpdates.audioEnFileName = fileName;
-        mongoScheduleUpdates.audioEnUrl = audioBase64OrDataUrl;
+        mongoScheduleUpdates.audioEnUrl = '';
       }
     } else {
       if (slot === 'pre_open') {
         mongoScheduleUpdates.audioPreOpenFileName = fileName;
-        mongoScheduleUpdates.audioPreOpenUrl = audioBase64OrDataUrl;
+        mongoScheduleUpdates.audioPreOpenUrl = '';
       } else if (slot === 'gate_open') {
         mongoScheduleUpdates.audioGateOpenFileName = fileName;
-        mongoScheduleUpdates.audioGateOpenUrl = audioBase64OrDataUrl;
+        mongoScheduleUpdates.audioGateOpenUrl = '';
       } else if (slot === 'closing') {
         mongoScheduleUpdates.audioClosingFileName = fileName;
-        mongoScheduleUpdates.audioClosingUrl = audioBase64OrDataUrl;
+        mongoScheduleUpdates.audioClosingUrl = '';
       } else {
         mongoScheduleUpdates.audioFileName = fileName;
-        mongoScheduleUpdates.audioUrl = audioBase64OrDataUrl;
+        mongoScheduleUpdates.audioUrl = '';
       }
     }
 
@@ -1004,12 +1043,12 @@ export async function getOrFetchAudioUrl(
       (await fetchAudioFromFirestoreChunks(`${schedule.id}_${effectiveSlotKey}`)) ||
       (await fetchAudioFromFirestoreChunks(`${cleanNo}_${effectiveSlotKey}`)) ||
       (await fetchAudioFromFirestoreChunks(`global_${effectiveSlotKey}`));
-    if (fetched) {
-      await saveAudioToIndexedDB(schedule.id, effectiveSlotKey, fetched);
-      await saveAudioToIndexedDB(cleanNo, effectiveSlotKey, fetched);
-      applyAudioUrlToSchedule(schedule, normSlot, fetched, lang);
+    if (fetched && fetched.dataUrl) {
+      await saveAudioToIndexedDB(schedule.id, effectiveSlotKey, fetched.dataUrl, fetched.updatedAt);
+      await saveAudioToIndexedDB(cleanNo, effectiveSlotKey, fetched.dataUrl, fetched.updatedAt);
+      applyAudioUrlToSchedule(schedule, normSlot, fetched.dataUrl, lang);
       notifySubscribers();
-      return fetched;
+      return fetched.dataUrl;
     }
   } catch (err) {
     console.warn('Could not fetch audio from MongoDB:', err);
@@ -1102,13 +1141,18 @@ export async function saveScheduleCustomAudioAlert(
   }
   notifySubscribers();
 
-  // 4. Update schedules document in MongoDB Atlas
+  // 4. Update schedules document in MongoDB Atlas (strip bulky base64 URLs; audio lives in audio_files)
   try {
+    const lightweightAlerts = currentAlerts.map(({ audioUrl: _a, audioEnUrl: _b, ...rest }) => ({
+      ...rest,
+      audioUrl: '',
+      audioEnUrl: '',
+    }));
     await fetch(`/api/schedules/${encodeURIComponent(scheduleId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        customAudioAlerts: currentAlerts,
+        customAudioAlerts: lightweightAlerts,
         updatedAt: now,
       }),
     });
@@ -1314,9 +1358,9 @@ export function subscribeAppSettings(
           urlId = cached;
         } else {
           const fetched = await fetchAudioFromFirestoreChunks('universal_pre_open');
-          if (fetched) {
-            await saveAudioToIndexedDB('universal', 'universal_pre_open', fetched);
-            urlId = fetched;
+          if (fetched && fetched.dataUrl) {
+            await saveAudioToIndexedDB('universal', 'universal_pre_open', fetched.dataUrl, fetched.updatedAt);
+            urlId = fetched.dataUrl;
           }
         }
       }
@@ -1327,9 +1371,9 @@ export function subscribeAppSettings(
           urlEn = cached;
         } else {
           const fetched = await fetchAudioFromFirestoreChunks('universal_pre_open_en');
-          if (fetched) {
-            await saveAudioToIndexedDB('universal', 'universal_pre_open_en', fetched);
-            urlEn = fetched;
+          if (fetched && fetched.dataUrl) {
+            await saveAudioToIndexedDB('universal', 'universal_pre_open_en', fetched.dataUrl, fetched.updatedAt);
+            urlEn = fetched.dataUrl;
           }
         }
       }
@@ -1451,7 +1495,7 @@ export async function saveUniversalPreOpenAudio(
 
   onProgress?.(90, 'Memperbarui konfigurasi universal stasiun di MongoDB...');
 
-  // 5. Update AppSettings in MongoDB
+  // 5. Update AppSettings in MongoDB (metadata only; audio payload lives in audio_files)
   try {
     await fetch('/api/settings', {
       method: 'PUT',
@@ -1460,11 +1504,11 @@ export async function saveUniversalPreOpenAudio(
         ...(isEn
           ? {
               universalPreOpenEnFileName: fileName,
-              universalPreOpenEnUrl: audioBase64OrDataUrl,
+              universalPreOpenEnUrl: '',
             }
           : {
               universalPreOpenFileName: fileName,
-              universalPreOpenUrl: audioBase64OrDataUrl,
+              universalPreOpenUrl: '',
             }),
         updatedAt: now,
       }),

@@ -85,7 +85,9 @@ export const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
   onSaved,
 }) => {
   const [schedule, setSchedule] = useState<FeederSchedule>(initialSchedule);
-  const [selectedSlot, setSelectedSlot] = useState<AudioEventSlot>(initialSlot);
+  const [selectedSlot, setSelectedSlot] = useState<AudioEventSlot>(
+    initialSlot === 'closing' ? 'gate_open' : initialSlot
+  );
   const [selectedLang, setSelectedLang] = useState<AudioLanguage>('id');
   const [activeTab, setActiveTab] = useState<'upload' | 'record'>('upload');
   const [previewAudioUrl, setPreviewAudioUrl] = useState<string>('');
@@ -720,8 +722,8 @@ export const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
               </button>
             </div>
 
-            {/* Grid of Slots: 3 Columns on both Mobile & Desktop */}
-            <div className="grid grid-cols-3 gap-1.5 sm:gap-2.5 mb-2">
+            {/* Grid of Slots: 2 Columns on both Mobile & Desktop */}
+            <div className="grid grid-cols-2 gap-1.5 sm:gap-2.5 mb-2">
               {/* Slot 1: 2 Mnt Sebelum Buka */}
               <button
                 type="button"
@@ -810,52 +812,6 @@ export const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
                   </div>
                   <div className="text-[9px] sm:text-[10px] text-emerald-300/90 font-mono mt-0.5 truncate">
                     {trainInfo.checkingStartTime} WIB
-                  </div>
-                </div>
-              </button>
-
-              {/* Slot 3: Panggilan Terakhir */}
-              <button
-                type="button"
-                onClick={() => setSelectedSlot('closing')}
-                className={`p-2 sm:p-2.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
-                  selectedSlot === 'closing'
-                    ? 'bg-amber-950/90 border-amber-400 ring-2 ring-amber-500/60 shadow-lg'
-                    : 'bg-[#06142e] border-blue-900/80 hover:border-blue-700 opacity-80'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-1 mb-1">
-                  <AlertTriangle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 flex-shrink-0" />
-                  <div className="flex items-center gap-0.5">
-                    <span
-                      className={`text-[8px] sm:text-[9px] px-1 py-0.2 rounded font-mono font-bold ${
-                        hasClosingAudioId
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/80'
-                          : 'bg-slate-900 text-slate-500 border border-slate-700'
-                      }`}
-                      title={hasClosingAudioId ? 'Audio Indonesia Tersedia' : 'Audio Indonesia Belum Ada'}
-                    >
-                      ID
-                    </span>
-                    <span
-                      className={`text-[8px] sm:text-[9px] px-1 py-0.2 rounded font-mono font-bold ${
-                        hasClosingAudioEn
-                          ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/80'
-                          : 'bg-slate-900 text-slate-500 border border-slate-700'
-                      }`}
-                      title={hasClosingAudioEn ? 'English Audio Ready' : 'English Audio Not Set'}
-                    >
-                      EN
-                    </span>
-                  </div>
-                </div>
-                <div>
-                  <div className="font-black text-[11px] sm:text-xs text-white leading-tight">
-                    <span className="sm:hidden">Batas Akhir</span>
-                    <span className="hidden sm:inline">Panggilan Terakhir</span>
-                  </div>
-                  <div className="text-[9px] sm:text-[10px] text-amber-300/90 font-mono mt-0.5 truncate">
-                    {trainInfo.closeGateTime} WIB
                   </div>
                 </div>
               </button>

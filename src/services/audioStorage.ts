@@ -16,7 +16,29 @@ interface AudioRecord {
   updatedAt: string;
 }
 
+let persistenceRequested = false;
+
+/**
+ * Requests persistent browser storage so TV/kiosk browsers do not evict IndexedDB audio cache.
+ */
+export async function ensurePersistentAudioStorage(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.persist) {
+    return false;
+  }
+  try {
+    const alreadyPersisted = await navigator.storage.persisted?.();
+    if (alreadyPersisted) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
 function openAudioDb(): Promise<IDBDatabase> {
+  if (!persistenceRequested) {
+    persistenceRequested = true;
+    void ensurePersistentAudioStorage();
+  }
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined' || !window.indexedDB) {
       reject(new Error('IndexedDB not supported'));
@@ -41,7 +63,8 @@ function openAudioDb(): Promise<IDBDatabase> {
 export async function saveAudioToIndexedDB(
   scheduleId: string,
   slot: string,
-  dataUrl: string
+  dataUrl: string,
+  updatedAt: string = new Date().toISOString()
 ): Promise<void> {
   try {
     const db = await openAudioDb();
@@ -53,9 +76,10 @@ export async function saveAudioToIndexedDB(
         scheduleId,
         slot,
         dataUrl,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
       };
-      const req = store.put(record);
+      console.log(`[DEBUG] saveAudioToIndexedDB: Key=${record.key}, UpdatedAt=${record.updatedAt}`);
+    const req = store.put(record);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
@@ -64,10 +88,10 @@ export async function saveAudioToIndexedDB(
   }
 }
 
-export async function getAudioFromIndexedDB(
+export async function getAudioRecordFromIndexedDB(
   scheduleId: string,
   slot: string
-): Promise<string | null> {
+): Promise<AudioRecord | null> {
   try {
     const db = await openAudioDb();
     return new Promise((resolve) => {
@@ -75,17 +99,21 @@ export async function getAudioFromIndexedDB(
       const store = tx.objectStore(STORE_NAME);
       const req = store.get(`${scheduleId}_${slot}`);
       req.onsuccess = () => {
-        if (req.result && req.result.dataUrl) {
-          resolve(req.result.dataUrl);
-        } else {
-          resolve(null);
-        }
+        resolve(req.result || null);
       };
       req.onerror = () => resolve(null);
     });
   } catch {
     return null;
   }
+}
+
+export async function getAudioFromIndexedDB(
+  scheduleId: string,
+  slot: string
+): Promise<string | null> {
+  const record = await getAudioRecordFromIndexedDB(scheduleId, slot);
+  return record?.dataUrl || null;
 }
 
 export async function deleteAudioFromIndexedDB(

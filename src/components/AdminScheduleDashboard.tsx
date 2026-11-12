@@ -116,21 +116,6 @@ export function getSchedulePlaybackOptions(item: FeederSchedule): {
           : 'Suara Sistem Stasiun Resmi',
     },
     {
-      key: 'slot_closing',
-      category: 'schedule',
-      label: `⚠️ ${closingTime} WIB • Panggilan Terakhir`,
-      timeStr: closingTime,
-      lang: hasClosingId && hasClosingEn ? 'bilingual' : hasClosingId ? 'id' : hasClosingEn ? 'en' : 'system',
-      sublabel:
-        hasClosingId && hasClosingEn
-          ? 'Bilingual (🇮🇩 ID ➔ Jeda 1.5s ➔ 🇬🇧 EN)'
-          : hasClosingId
-          ? `File MP3 (ID): ${item.audioClosingFileName || item.audioFileName || 'closing.mp3'}`
-          : hasClosingEn
-          ? `File MP3 (EN): ${item.audioClosingEnFileName || item.audioEnFileName || 'closing_en.mp3'}`
-          : 'Suara Sistem Stasiun Resmi',
-    },
-    {
       key: 'boarding',
       category: 'schedule',
       label: `📢 ${departureTime} WIB • Keberangkatan`,
@@ -210,30 +195,6 @@ export function getSchedulePlaybackOptions(item: FeederSchedule): {
       sublabel: `Gate Opened (${gateOpenTime} WIB) • English`,
       audioUrl: item.audioGateOpenEnUrl,
       fileName: item.audioGateOpenEnFileName,
-      lang: 'en',
-    });
-  }
-
-  if (item.audioClosingUrl || item.audioClosingFileName || item.audioUrl || item.audioFileName) {
-    fileOptions.push({
-      key: 'file_closing_id',
-      category: 'file',
-      label: `🇮🇩 ${item.audioClosingFileName || item.audioFileName || 'closing_id.mp3'}`,
-      sublabel: `Panggilan Terakhir (${closingTime} WIB) • Bahasa Indonesia`,
-      audioUrl: item.audioClosingUrl || item.audioUrl,
-      fileName: item.audioClosingFileName || item.audioFileName,
-      lang: 'id',
-    });
-  }
-
-  if (item.audioClosingEnUrl || item.audioClosingEnFileName || item.audioEnUrl || item.audioEnFileName) {
-    fileOptions.push({
-      key: 'file_closing_en',
-      category: 'file',
-      label: `🇬🇧 ${item.audioClosingEnFileName || item.audioEnFileName || 'closing_en.mp3'}`,
-      sublabel: `Last Call (${closingTime} WIB) • English`,
-      audioUrl: item.audioClosingEnUrl || item.audioEnUrl,
-      fileName: item.audioClosingEnFileName || item.audioEnFileName,
       lang: 'en',
     });
   }
@@ -1036,23 +997,6 @@ export const AdminScheduleDashboard: React.FC<AdminScheduleDashboardProps> = ({
                       <span>Gate Buka</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAudioTargetSlot('closing');
-                        setAudioTargetSchedule(item);
-                      }}
-                      className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors flex items-center gap-1 cursor-pointer ${
-                        hasClosing
-                          ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700/80 hover:bg-emerald-900'
-                          : 'bg-slate-900/70 text-slate-400 border-slate-700/60 hover:border-slate-500'
-                      }`}
-                      title="Slot 3: Batas Akhir Masuk Gate"
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${hasClosing ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-                      <span>Batas Akhir</span>
-                    </button>
-
                     {customAlerts.map((ca) => (
                       <button
                         key={ca.id}
@@ -1504,23 +1448,6 @@ export const AdminScheduleDashboard: React.FC<AdminScheduleDashboardProps> = ({
                             >
                               <span className={`w-1.5 h-1.5 rounded-full ${hasGateOpen ? 'bg-emerald-400' : 'bg-slate-600'}`}></span>
                               Gate Buka
-                            </button>
-
-                            {/* Slot 3: Batas Akhir / Last Call */}
-                            <button
-                              onClick={() => {
-                                setAudioTargetSlot('closing');
-                                setAudioTargetSchedule(item);
-                              }}
-                              className={`text-[10px] font-mono px-2 py-0.5 rounded border font-semibold flex items-center gap-1 cursor-pointer transition-transform hover:scale-105 ${
-                                hasClosing
-                                  ? 'bg-amber-950 text-amber-300 border-amber-500/80 hover:bg-amber-900'
-                                  : 'bg-slate-900 text-slate-500 border-slate-800 hover:text-slate-300'
-                              }`}
-                              title={hasClosing ? 'File MP3 panggilan terakhir aktif (Klik untuk kelola)' : 'Klik untuk upload/rekam slot Batas Akhir'}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full ${hasClosing ? 'bg-amber-400' : 'bg-slate-600'}`}></span>
-                              Batas Akhir
                             </button>
 
                             {/* Custom MP3 Slots (misal 5 menit sebelum keberangkatan) */}
