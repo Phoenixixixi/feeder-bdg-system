@@ -1,0 +1,10 @@
+{
+  "name": "Remix Remix Jadwal KA Feeder Real-Time",
+  "description": "Dashboard PIDS jadwal real-time KA Feeder Kereta Cepat Stasiun Bandung - Padalarang dengan status checking, close gate otomatis, dan notifikasi suara.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
